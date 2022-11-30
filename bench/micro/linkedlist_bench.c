@@ -1524,7 +1524,7 @@ int main(int argc, char **argv)
 	printf("Starting benchmark ...\n");
 
 	int response_id;
-	if(1) {
+	if(0) {
 		response_id = 1;
 		while(!stop) {
 			char c = getchar();
