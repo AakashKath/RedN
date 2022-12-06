@@ -669,10 +669,10 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id)
 
 		IBV_TRIGGER(master_sock, sockfd, 0);
 
-		while(*res != (5555 + key - 1000)) {
+		// while(*res != (5555 + key - 1000)) {
 			//printf("res %lu\n", *res);
 			//sleep(1);
-		}
+		// }
 
 		time_stats_stop(timer);
 
