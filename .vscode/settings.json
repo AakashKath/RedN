@@ -1,5 +1,6 @@
 {
     "files.associations": {
-        "agent.h": "c"
+        "agent.h": "c",
+        "linkedlist_bench.h": "c"
     }
 }

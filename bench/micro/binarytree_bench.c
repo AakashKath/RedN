@@ -8,7 +8,7 @@
 #include <ifaddrs.h>
 #include <inttypes.h>
 #include "time_stat.h"
-// #include "agent.h"
+#include "agent.h"
 # include "binarytree_bench.h"
 
 struct time_stats *timer;
@@ -19,6 +19,12 @@ int psync = 0;
 
 #define OFFLOAD_COUNT 5000
 static pthread_t offload_thread;
+
+#define REDN 1
+// #define ONE_SIDED 1
+
+#define SHM_PATH "/ifbw_shm"
+#define SHM_F_SIZE 128
 
 char *portno = "12345";
 char *client_portno = "11111";
@@ -76,6 +82,32 @@ void remove_peer_socket(int sockfd) {
 	;
 }
 
+void print_seg_data() {
+	if(sr0_data && sr0_raddr) {
+		printf("------ AFTER ------\n");
+		for(int j=0; j<LIST_SIZE; j++) {
+			printf("sr0_data[0]: addr %lu length %u\n", be64toh(sr0_data[j+0]->addr), ntohl(sr0_data[j+0]->byte_count));
+			printf("sr0_data[1]: addr %lu length %u\n", be64toh(sr0_data[j+1]->addr), ntohl(sr0_data[j+1]->byte_count));
+			printf("sr0_data[2]: addr %lu length %u\n", be64toh(sr0_data[j+2]->addr), ntohl(sr0_data[j+2]->byte_count));
+			printf("sr0_raddr: raddr %lu\n", ntohll(sr0_raddr[j]->raddr));
+			printf("sr1_atomic: compare %lx (original: %lx) swap_add %lx (original: %lx)\n",
+					be64toh(sr1_atomic[j]->compare), sr1_atomic[j]->compare, be64toh(sr1_atomic[j]->swap_add), sr1_atomic[j]->swap_add);
+			printf("sr1_raddr: raddr %lu\n", ntohll(sr1_raddr[j]->raddr));
+
+			uint32_t sr2_meta = ntohl(sr2_ctrl[j]->opmod_idx_opcode);
+			uint16_t idx2 =  ((sr2_meta >> 8) & (UINT_MAX));
+			uint8_t opmod2 = ((sr2_meta >> 24) & (UINT_MAX));
+			uint8_t opcode2 = (sr2_meta & USHRT_MAX);
+
+			printf("&sr2_ctrl->opmod_idx_opcode %lu\n", (uintptr_t)&sr2_ctrl[j]->opmod_idx_opcode);
+			printf("sr2_ctrl: raw %lx idx %u opmod %u opcode %u qpn_ds %x fm_ce_se %x sig %u (imm %u)\n", *((uint64_t *)&sr2_ctrl[j]->opmod_idx_opcode), idx2, opmod2, opcode2, ntohl(sr2_ctrl[j]->qpn_ds), ntohl(sr2_ctrl[j]->fm_ce_se), sr2_ctrl[j]->signature, ntohl(sr2_ctrl[j]->imm));
+			printf("sr2_data: addr %lu length %u\n", be64toh(sr2_data[j]->addr), ntohl(sr2_data[j]->byte_count));
+			printf("*sr2_data->addr = %lu\n", *((uint64_t *)be64toh(sr2_data[j]->addr)));
+			printf("sr2_raddr: raddr %lu\n", be64toh(sr2_raddr[j]->raddr));
+		}
+	}
+}
+
 void test_callback(struct app_context *msg) {
 	if(!isClient) {	
 
@@ -99,7 +131,204 @@ void * offload_binarytree(void *iters) {
 }
 
 void init_binarytree(addr_t addr) {
-	;
+	printf("---- Initializing binarytree ----\n");
+
+	struct ll_bucket *bucket = (struct ll_bucket*)addr;
+
+	printf("bucket addr %lu\n", addr);
+	for(int i=0; i<10; i++) {
+		bucket[i].key[0] = i + 1000;
+		bucket[i].key[1] = 0;
+		bucket[i].key[2] = 0;
+		bucket[i].addr = htobe64((uintptr_t) &bucket[i].value[0]);
+		bucket[i].value[0] = 5555 + i;
+
+		if(i > 0) {
+			if(i%2 == 0)
+				bucket[(i-1)/2].right = htobe64((uintptr_t) &bucket[i]);
+			else
+				bucket[(i-1)/2].left = htobe64((uintptr_t) &bucket[i]);
+		}
+
+		printf("bucket[%d] key=%u addr=%lu\n", i, *((uint32_t *)bucket[i].key), be64toh(bucket[i].addr));
+	}
+}
+
+void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
+	struct timespec start, end;
+
+	addr_t base_addr = mr_local_addr(sockfd, MR_DATA);
+
+	#if REDN
+		volatile uint64_t *res = (volatile uint64_t *) (base_addr);
+
+		uint32_t wr_id = post_get_req_async(sockfd, key, response_id);
+
+		time_stats_start(timer);
+
+		IBV_TRIGGER(master_sock, sockfd, 0);
+
+		// while(*res != (5555 + key - 1000)) {
+			//printf("res %lu\n", *res);
+			//sleep(1);
+		// }
+
+		time_stats_stop(timer);
+		time_stats_print(timer, "Run Complete");
+
+		//reset
+		*res = 0;
+	#elif defined(ONE_SIDED)
+		volatile struct ll_bucket *bucket = NULL;
+		uint32_t wr_id = 0;
+		addr_t bucket_addr =  mr_remote_addr(sockfd, MR_DATA);
+
+		time_stats_start(timer);
+
+		for(int i=0; i<LIST_SIZE; i++) {
+			printf("read from remote addr %lu\n", bucket_addr);
+			wr_id = post_read(sockfd, base_addr, bucket_addr, 19, MR_DATA, MR_DATA);
+			IBV_TRIGGER(master_sock, sockfd, 0);
+			IBV_AWAIT_WORK_COMPLETION(sockfd, wr_id);
+			bucket = (volatile struct ll_bucket *) base_addr;
+
+			printf("key required %u found %u\n", (uint8_t)key, bucket->key[0]);
+			if(bucket->key[0] == (uint8_t)key) {
+				printf("found key\n");
+				wr_id = post_read(sockfd, base_addr + offsetof(struct ll_bucket, value),
+						bucket_addr + offsetof(struct ll_bucket, value), 8, MR_DATA, MR_DATA);
+				IBV_TRIGGER(master_sock, sockfd, 0);
+				IBV_AWAIT_WORK_COMPLETION(sockfd, wr_id);
+				break;
+			}
+			else {
+				bucket_addr = ntohll(bucket->next);
+				//base_addr += sizeof(struct ll_bucket);
+			}
+
+			//XXX remove
+			if(i==0) {
+				wr_id = post_read(sockfd, base_addr + offsetof(struct ll_bucket, value),
+						bucket_addr + offsetof(struct ll_bucket, value), 8, MR_DATA, MR_DATA);
+				IBV_TRIGGER(master_sock, sockfd, 0);
+				IBV_AWAIT_WORK_COMPLETION(sockfd, wr_id);
+				break;
+			}
+		}
+
+		time_stats_stop(timer);
+		time_stats_print(timer, "Run Complete");
+	#endif
+}
+
+int process_opt_args(int argc, char *argv[]) {
+	int dash_d = -1;
+	restart:
+	for (int i = 0; i < argc; i++) {
+		if (strncmp("-b", argv[i], 2) == 0) {
+			batch_size = atoi(argv[i+1]);
+			dash_d = i;
+			argc = adjust_args(dash_d, argv, argc, 2);
+			goto restart;
+		}
+		else if (strncmp("-e", argv[i], 2) == 0) {
+			sge_count = atoi(argv[i+1]);
+			dash_d = i;
+			argc = adjust_args(dash_d, argv, argc, 2);
+			goto restart;
+		}
+		else if (strncmp("-p", argv[i], 2) == 0) {
+			portno = argv[i+1];
+			dash_d = i;
+			argc = adjust_args(dash_d, argv, argc, 2);
+			goto restart;
+		}
+		else if (strncmp("-i", argv[i], 2) == 0) {
+			intf = argv[i+1];
+			dash_d = i;
+			argc = adjust_args(dash_d, argv, argc, 2);
+			goto restart;
+		}
+		else if (strncmp("-s", argv[i], 2) == 0) {
+			psync = 1;
+			dash_d = i;
+			argc = adjust_args(dash_d, argv, argc, 1);
+			goto restart;
+		}
+		else if (strncmp("-cas", argv[i], 4) == 0) {
+			use_cas = 1;
+			dash_d = i;
+			argc = adjust_args(dash_d, argv, argc, 1);
+			goto restart;
+		}
+	}
+
+   return argc;
+}
+
+void* create_shm(int *fd, int *res) {
+	void * addr;
+	*fd = shm_open(SHM_PATH, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
+	if (fd < 0) {
+		exit(-1);
+	}
+
+	*res = ftruncate(*fd, SHM_F_SIZE);
+	if (res < 0)
+	{
+		exit(-1);
+	}
+
+	addr = mmap(NULL, SHM_F_SIZE, PROT_WRITE, MAP_SHARED, *fd, 0);
+	if (addr == MAP_FAILED){
+		exit(-1);
+	}
+
+	return addr;
+}
+
+void destroy_shm(void *addr) {
+	int ret, fd;
+	ret = munmap(addr, SHM_F_SIZE);
+	if (ret < 0)
+	{
+		exit(-1);
+	}
+
+	fd = shm_unlink(SHM_PATH);
+	if (fd < 0) {
+		exit(-1);
+	}
+}
+
+int get_ipaddress(char* ip, char* intf){
+	struct ifaddrs *interfaces = NULL;
+	struct ifaddrs *temp_addr = NULL;
+	char *ipAddress = NULL;
+	int success = 0;
+	int ret = -1;
+	// retrieve the current interfaces - returns 0 on success
+	success = getifaddrs(&interfaces);
+	if (success == 0) {
+		// Loop through linked list of interfaces
+		temp_addr = interfaces;
+		while(temp_addr != NULL) {
+			if(temp_addr->ifa_addr->sa_family == AF_INET) {
+				// Check if interface is en0 which is the wifi connection on the iPhone
+				if(strcmp(temp_addr->ifa_name, intf)==0){
+					ipAddress=inet_ntoa(((struct sockaddr_in*)temp_addr->ifa_addr)->sin_addr);
+					strcpy(ip, ipAddress);
+					ret = 0;
+				}
+			}
+			temp_addr = temp_addr->ifa_next;
+		}
+	}
+
+	// Free memory
+	freeifaddrs(interfaces);
+
+	return ret;
 }
 
 int main(int argc, char **argv) {
