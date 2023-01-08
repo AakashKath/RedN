@@ -31,8 +31,6 @@ char *portno = "12345";
 char *client_portno = "11111";
 char *server_portno = "22222";
 
-struct mr_context regions[MR_COUNT];
-
 char *intf = "ib0";
 
 int master_sock = 0;
@@ -55,7 +53,28 @@ enum sock_type {
 	SOCK_WORKER
 };
 
+struct mr_context regions[MR_COUNT];
+
 uint64_t mr_sizes[MR_COUNT] = {268265456UL, 268265456UL};
+
+struct wqe_ctrl_seg *sr_ctrl[LIST_SIZE] = {NULL};
+struct mlx5_wqe_data_seg * sr_data[LIST_SIZE] = {NULL};
+struct mlx5_wqe_raddr_seg * sr_raddr[LIST_SIZE] = {NULL};
+struct wqe_ctrl_seg *sr0_ctrl[LIST_SIZE] = {NULL};
+struct mlx5_wqe_raddr_seg * sr0_raddr[LIST_SIZE] = {NULL};
+struct mlx5_wqe_data_seg * sr0_data[LIST_SIZE*3] = { NULL };
+struct wqe_ctrl_seg *sr1_ctrl[LIST_SIZE] = {NULL};
+struct mlx5_wqe_data_seg * sr1_data[LIST_SIZE] = {NULL};
+struct mlx5_wqe_raddr_seg * sr1_raddr[LIST_SIZE] = {NULL};
+struct mlx5_wqe_atomic_seg * sr1_atomic[LIST_SIZE] = {NULL};
+struct wqe_ctrl_seg *sr2_ctrl[LIST_SIZE] = {NULL};
+struct mlx5_wqe_data_seg * sr2_data[LIST_SIZE] = {NULL};
+struct mlx5_wqe_raddr_seg * sr2_raddr[LIST_SIZE] = {NULL};
+int sr_wrid[LIST_SIZE], sr0_wrid[LIST_SIZE], sr1_wrid[LIST_SIZE], sr2_wrid[LIST_SIZE];
+uint32_t meta1_backup;
+uint32_t meta2_backup;
+
+struct timespec start;
 
 void add_peer_socket(int sockfd) {
 	int sock_type = rc_connection_meta(sockfd);
