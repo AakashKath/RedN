@@ -773,7 +773,6 @@ int main(int argc, char **argv) {
 	}
 
     init_rdma_agent(portno, regions, MR_COUNT, 256, add_peer_socket, remove_peer_socket, test_callback);
-	master_sock = add_connection(host, portno, SOCK_MASTER, 1, 0);
 
 	// Run in server mode
 	if(!isClient) {
