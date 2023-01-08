@@ -57,6 +57,28 @@ struct mr_context regions[MR_COUNT];
 
 uint64_t mr_sizes[MR_COUNT] = {268265456UL, 268265456UL};
 
+
+#define MAX(x, y) (((x) > (y)) ? (x) : (y))
+#define MIN(x, y) (((x) < (y)) ? (x) : (y))
+
+#define IS_ALIGNED(x, a) (((x) & ((__typeof__(x))(a) - 1)) == 0)
+
+#ifdef __cplusplus
+	#define ALIGN(x, a)  ALIGN_MASK((x), ((__typeof__(x))(a) - 1))
+#else
+	#define ALIGN(x, a)  ALIGN_MASK((x), ((typeof(x))(a) - 1))
+#endif
+
+#define ALIGN_MASK(x, mask)	(((x) + (mask)) & ~(mask))
+
+#if __BIG_ENDIAN__
+    #define htonll(x)   (x)
+    #define ntohll(x)   (x)
+#else
+    #define htonll(x)   ((((uint64_t)htonl(x&0xFFFFFFFF)) << 32) + htonl(x >> 32))
+    #define ntohll(x)   ((((uint64_t)ntohl(x&0xFFFFFFFF)) << 32) + ntohl(x >> 32))
+#endif
+
 struct wqe_ctrl_seg *sr_ctrl[LIST_SIZE] = {NULL};
 struct mlx5_wqe_data_seg * sr_data[LIST_SIZE] = {NULL};
 struct mlx5_wqe_raddr_seg * sr_raddr[LIST_SIZE] = {NULL};
