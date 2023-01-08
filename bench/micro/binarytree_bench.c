@@ -193,7 +193,8 @@ uint32_t post_dummy_write(int sockfd, int iosize, int imm) {
 	meta->sge_entries[0].addr = local_base_addr;
 	meta->sge_entries[0].length = iosize;
 	meta->imm = imm;
-	meta->next = NULL;
+	meta->left = NULL;
+	meta->right = NULL;
 
 	if(imm)
 		return IBV_WRAPPER_RDMA_WRITE_WITH_IMM_ASYNC(sockfd, meta, src_mr, dst_mr);
@@ -226,7 +227,8 @@ uint32_t post_binarytree_read(int sockfd, uint32_t lkey1, uint32_t lkey2, uint32
 	sge[2].lkey = lkey1;
 
 	/* prepare the send work request */
-	wr->next = NULL;
+	wr->left = NULL;
+	wr->right = NULL;
 	wr->wr_id = IBV_NEXT_WR_ID(sockfd);
 	wr->sg_list = sge;
 	wr->num_sge = 3;
@@ -491,7 +493,8 @@ uint32_t post_read(int sockfd, uint64_t src, uint64_t dst, int iosize, int src_m
 	meta->sge_count = 1;
 	meta->sge_entries[0].addr = src;
 	meta->sge_entries[0].length = iosize;
-	meta->next = NULL;
+	meta->left = NULL;
+	meta->right = NULL;
 
 	printf("reading from dst %lu to src %lu\n", dst, src);
 
@@ -572,7 +575,7 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 				break;
 			}
 			else {
-				bucket_addr = ntohll(bucket->next);
+				bucket_addr = ntohll(bucket->left);
 			}
 
 			//XXX remove
