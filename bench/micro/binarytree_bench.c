@@ -590,6 +590,17 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 	#endif
 }
 
+/* Returns new argc */
+static int adjust_args(int i, char *argv[], int argc, unsigned del) {
+	if (i >= 0) {
+		for (int j = i + del; j < argc; j++, i++)
+			argv[i] = argv[j];
+		argv[i] = NULL;
+		return argc - del;
+	}
+   return argc;
+}
+
 int process_opt_args(int argc, char *argv[]) {
 	int dash_d = -1;
 	restart:
