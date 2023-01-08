@@ -21,11 +21,18 @@ int psync = 0;
 static pthread_t offload_thread;
 #define LIST_SIZE 8
 
+int temp1_wrid[OFFLOAD_COUNT] = {0};
+int temp2_wrid[OFFLOAD_COUNT] = {0};
+
 #define REDN 1
 // #define ONE_SIDED 1
 
 #define SHM_PATH "/ifbw_shm"
 #define SHM_F_SIZE 128
+
+int batch_size = 1;	//default - batching disabled
+int sge_count = 1;	//default - 1 scatter/gather element
+int use_cas = 0;	//default - compare_and_swap disabled
 
 char *portno = "12345";
 char *client_portno = "11111";
