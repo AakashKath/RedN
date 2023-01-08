@@ -555,34 +555,23 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 
 		time_stats_start(timer);
 
-		for(int i=0; i<LIST_SIZE; i++) {
-			printf("read from remote addr %lu\n", bucket_addr);
-			wr_id = post_read(sockfd, base_addr, bucket_addr, 19, MR_DATA, MR_DATA);
+		printf("read from remote addr %lu\n", bucket_addr);
+		wr_id = post_read(sockfd, base_addr, bucket_addr, 19, MR_DATA, MR_DATA);
+		IBV_TRIGGER(master_sock, sockfd, 0);
+		IBV_AWAIT_WORK_COMPLETION(sockfd, wr_id);
+		bucket = (volatile struct bt_bucket *) base_addr;
+
+		printf("key required %u found %u\n", (uint8_t)key, bucket->key[0]);
+		if(bucket->key[0] == (uint8_t)key) {
+			printf("found key\n");
+			wr_id = post_read(sockfd, base_addr + offsetof(struct bt_bucket, value),
+					bucket_addr + offsetof(struct bt_bucket, value), 8, MR_DATA, MR_DATA);
 			IBV_TRIGGER(master_sock, sockfd, 0);
 			IBV_AWAIT_WORK_COMPLETION(sockfd, wr_id);
-			bucket = (volatile struct bt_bucket *) base_addr;
-
-			printf("key required %u found %u\n", (uint8_t)key, bucket->key[0]);
-			if(bucket->key[0] == (uint8_t)key) {
-				printf("found key\n");
-				wr_id = post_read(sockfd, base_addr + offsetof(struct bt_bucket, value),
-						bucket_addr + offsetof(struct bt_bucket, value), 8, MR_DATA, MR_DATA);
-				IBV_TRIGGER(master_sock, sockfd, 0);
-				IBV_AWAIT_WORK_COMPLETION(sockfd, wr_id);
-				break;
-			}
-			else {
-				bucket_addr = ntohll(bucket->left);
-			}
-
-			//XXX remove
-			if(i==0) {
-				wr_id = post_read(sockfd, base_addr + offsetof(struct bt_bucket, value),
-						bucket_addr + offsetof(struct bt_bucket, value), 8, MR_DATA, MR_DATA);
-				IBV_TRIGGER(master_sock, sockfd, 0);
-				IBV_AWAIT_WORK_COMPLETION(sockfd, wr_id);
-				break;
-			}
+			break;
+		}
+		else {
+			printf("didn't find key required %d. found %d \n", key, bucket->key[0]);
 		}
 
 		time_stats_stop(timer);
