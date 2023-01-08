@@ -19,6 +19,7 @@ int psync = 0;
 
 #define OFFLOAD_COUNT 5000
 static pthread_t offload_thread;
+#define LIST_SIZE 8
 
 #define REDN 1
 // #define ONE_SIDED 1
@@ -100,7 +101,9 @@ void print_seg_data() {
 			uint8_t opcode2 = (sr2_meta & USHRT_MAX);
 
 			printf("&sr2_ctrl->opmod_idx_opcode %lu\n", (uintptr_t)&sr2_ctrl[j]->opmod_idx_opcode);
-			printf("sr2_ctrl: raw %lx idx %u opmod %u opcode %u qpn_ds %x fm_ce_se %x sig %u (imm %u)\n", *((uint64_t *)&sr2_ctrl[j]->opmod_idx_opcode), idx2, opmod2, opcode2, ntohl(sr2_ctrl[j]->qpn_ds), ntohl(sr2_ctrl[j]->fm_ce_se), sr2_ctrl[j]->signature, ntohl(sr2_ctrl[j]->imm));
+			printf("sr2_ctrl: raw %lx idx %u opmod %u opcode %u qpn_ds %x fm_ce_se %x sig %u (imm %u)\n",
+					*((uint64_t *)&sr2_ctrl[j]->opmod_idx_opcode), idx2, opmod2, opcode2, ntohl(sr2_ctrl[j]->qpn_ds),
+					ntohl(sr2_ctrl[j]->fm_ce_se), sr2_ctrl[j]->signature, ntohl(sr2_ctrl[j]->imm));
 			printf("sr2_data: addr %lu length %u\n", be64toh(sr2_data[j]->addr), ntohl(sr2_data[j]->byte_count));
 			printf("*sr2_data->addr = %lu\n", *((uint64_t *)be64toh(sr2_data[j]->addr)));
 			printf("sr2_raddr: raddr %lu\n", be64toh(sr2_raddr[j]->raddr));
@@ -126,14 +129,289 @@ void test_callback(struct app_context *msg) {
 	printf("Received response with id %d\n", msg->id);
 }
 
+uint32_t post_dummy_write(int sockfd, int iosize, int imm) {
+	// send response
+	int src_mr = 0;
+	int dst_mr = 0;
+
+	uint64_t remote_base_addr = mr_remote_addr(sockfd, dst_mr);
+	uint64_t local_base_addr = mr_local_addr(sockfd, src_mr);
+	rdma_meta_t *meta =  (rdma_meta_t *) malloc(sizeof(rdma_meta_t)
+			+ 1 * sizeof(struct ibv_sge));
+
+	meta->addr = remote_base_addr;
+	meta->length = iosize;
+	meta->sge_count = 1;
+	meta->sge_entries[0].addr = local_base_addr;
+	meta->sge_entries[0].length = iosize;
+	meta->imm = imm;
+	meta->next = NULL;
+
+	if(imm)
+		return IBV_WRAPPER_RDMA_WRITE_WITH_IMM_ASYNC(sockfd, meta, src_mr, dst_mr);
+	else
+		return IBV_WRAPPER_RDMA_WRITE_ASYNC(sockfd, meta, src_mr, dst_mr);
+}
+
+uint32_t post_binarytree_read(int sockfd, uint32_t lkey1, uint32_t lkey2, uint32_t rkey) {
+	int src_mr = 0;
+	int dst_mr = 0;
+	int signaled = 1;
+
+	uint64_t remote_base_addr = mr_remote_addr(sockfd, dst_mr);
+	uint64_t local_base_addr = mr_local_addr(sockfd, src_mr);
+
+	struct ibv_send_wr *wr = malloc(sizeof(struct ibv_send_wr));
+	memset (wr, 0, sizeof (struct ibv_send_wr));
+
+	struct ibv_sge *sge = malloc(sizeof(struct ibv_sge) * 3);
+	memset(sge, 0, sizeof(struct ibv_sge) * 3);
+
+	sge[0].addr = local_base_addr;
+	sge[0].length = 3;
+	sge[0].lkey = lkey2;
+	sge[1].addr = local_base_addr;
+	sge[1].length = 8;
+	sge[1].lkey = lkey2;
+	sge[2].addr = local_base_addr;
+	sge[2].length = 8;
+	sge[2].lkey = lkey1;
+
+	/* prepare the send work request */
+	wr->next = NULL;
+	wr->wr_id = IBV_NEXT_WR_ID(sockfd);
+	wr->sg_list = sge;
+	wr->num_sge = 3;
+	wr->wr.rdma.remote_addr = remote_base_addr;
+	wr->wr.rdma.rkey = rkey;
+
+	wr->opcode = IBV_WR_RDMA_READ;
+	
+	if(signaled)
+		wr->send_flags = IBV_SEND_SIGNALED;
+
+	return IBV_POST_ASYNC(sockfd, wr);
+}
+
 void * offload_binarytree(void *iters) {
-	;
+	int count = *((int *)iters);
+	int master = master_sock;
+	int client = client_sock;
+	int worker = worker_sock;
+
+	uint64_t base_data_addr = mr_local_addr(worker, MR_DATA);
+	uint64_t base_buffer_addr = mr_local_addr(worker, MR_BUFFER);
+
+	printf("performing binary tree offload [client: %d worker: %d]\n", client, worker);
+
+	int count_1 = 11;
+	int count_2 = 4;
+
+	for(int k=0; k<count; k++) {
+		if(k == 0)
+			IBV_WAIT_TILL(worker, client, 4);
+		else
+			IBV_WAIT_EXPLICIT(worker, client, 1);
+
+		IBV_TRIGGER_EXPLICIT(worker, worker, count_1);
+
+		for(int j=0; j<LIST_SIZE; j++) {
+			printf("remote start: %lu end: %lu\n", mr_remote_addr(worker, MR_DATA), mr_remote_addr(worker, MR_DATA) + mr_sizes[MR_DATA]);
+			sr0_wrid[j] = post_binarytree_read(worker, mr_local_key(worker, mr_get_sq_idx(worker)),
+					mr_local_key(client, mr_get_sq_idx(client)), mr_remote_key(worker, MR_DATA));
+
+			sr1_wrid[j] = IBV_CAS_ASYNC(worker, base_buffer_addr, base_buffer_addr, 0, 1, mr_remote_key(master, MR_BUFFER), mr_local_key(client, mr_get_sq_idx(client)), 1);
+
+			if(k == 0 && j == 0)
+				IBV_WAIT_TILL(worker, worker, 3);
+			else {
+				IBV_WAIT_EXPLICIT(worker, worker, 2);
+			}
+
+			IBV_TRIGGER_EXPLICIT(worker, client, count_2);
+
+			if(j < LIST_SIZE - 2)
+				IBV_TRIGGER_EXPLICIT(worker, worker, count_1+6);
+			else if(j == LIST_SIZE - 2) {
+				if(k == count - 1)
+					IBV_TRIGGER_EXPLICIT(worker, worker, count_1+5);
+				else
+					IBV_TRIGGER_EXPLICIT(worker, worker, count_1+6);
+			}
+
+			printf("j %d LIST_SIZE %d k %d count %d\n", j, LIST_SIZE, k, count);
+			if(j == LIST_SIZE - 1 && k < count - 1) {
+				count_1 += 2;
+				IBV_TRIGGER_EXPLICIT(worker, worker, count_1);
+			}
+
+			sr2_wrid[j] = post_dummy_write(client, 8, k + j + 1);
+
+			// find READ WR
+			sr0_ctrl[j] = IBV_FIND_WQE(worker, sr0_wrid[j]);
+
+			if(!sr0_ctrl[j]) {
+				printf("Failed to find sr1 seg\n");
+				pause();
+			}
+
+			uint32_t sr0_meta = ntohl(sr0_ctrl[j]->opmod_idx_opcode);
+			uint16_t idx0 =  ((sr0_meta >> 8) & (UINT_MAX));
+			uint8_t opmod0 = ((sr0_meta >> 24) & (UINT_MAX));
+			uint8_t opcode0 = (sr0_meta & USHRT_MAX);
+
+			printf("sr0 (READ) segment will be posted to idx #%u\n", idx0);
+
+
+			// find CAS WR
+			sr1_ctrl[j] = IBV_FIND_WQE(worker, sr1_wrid[j]);
+
+			if(!sr1_ctrl[j]) {
+				printf("Failed to find sr0 seg\n");
+				pause();
+			}
+
+			uint32_t sr1_meta = ntohl(sr1_ctrl[j]->opmod_idx_opcode);
+			uint16_t idx1 =  ((sr1_meta >> 8) & (UINT_MAX));
+			uint8_t opmod1 = ((sr1_meta >> 24) & (UINT_MAX));
+			uint8_t opcode1 = (sr1_meta & USHRT_MAX);
+
+			printf("sr1 (CAS) segment will be posted to idx #%u\n", idx1);
+
+			// find WRITE WR
+			sr2_ctrl[j] = IBV_FIND_WQE(client, sr2_wrid[j]);
+
+			if(!sr2_ctrl[j]) {
+				printf("Failed to find sr2 seg\n");
+				pause();
+			}
+
+			uint32_t sr2_meta = ntohl(sr2_ctrl[j]->opmod_idx_opcode);
+			uint16_t idx2 =  ((sr2_meta >> 8) & (UINT_MAX));
+			uint8_t opmod2 = ((sr2_meta >> 24) & (UINT_MAX));
+			uint8_t opcode2 = (sr2_meta & USHRT_MAX);
+
+			printf("sr2 (WRITE) segment will be posted to idx #%u\n", idx2);
+
+			void *seg0 = ((void*)sr0_ctrl[j]) + sizeof(struct mlx5_wqe_ctrl_seg) + sizeof(struct mlx5_wqe_raddr_seg);
+
+			// need to modify 3 sges
+			for(int i=0; i<3; i++) {
+				sr0_data[j*3+i] = (struct mlx5_wqe_data_seg *) (seg0 + i * sizeof(struct mlx5_wqe_data_seg));
+			}
+
+			seg0 = ((void*)sr0_ctrl[j]) + sizeof(struct mlx5_wqe_ctrl_seg);
+
+			sr0_raddr[j] = (struct mlx5_wqe_raddr_seg *) seg0;
+
+
+			void *seg1 = ((void*)sr1_ctrl[j]) + sizeof(struct mlx5_wqe_ctrl_seg) +
+				sizeof(struct mlx5_wqe_atomic_seg) + sizeof(struct mlx5_wqe_raddr_seg);
+
+			sr1_data[j] = (struct mlx5_wqe_data_seg *) seg1;
+
+			seg1 = ((void*)sr1_ctrl[j]) + sizeof(struct mlx5_wqe_ctrl_seg);
+
+			sr1_raddr[j] = (struct mlx5_wqe_raddr_seg *) seg1;
+
+			seg1 = ((void*)sr1_ctrl[j]) + sizeof(struct mlx5_wqe_ctrl_seg) + sizeof(struct mlx5_wqe_raddr_seg);
+
+			sr1_atomic[j] = (struct mlx5_wqe_atomic_seg *) seg1; 
+
+
+			void *seg2 = ((void*)sr2_ctrl[j]) + sizeof(struct mlx5_wqe_ctrl_seg);
+
+			sr2_raddr[j] = (struct mlx5_wqe_raddr_seg *) seg2;
+
+			seg2 = ((void*)sr2_ctrl[j]) + sizeof(struct mlx5_wqe_ctrl_seg) + sizeof(struct mlx5_wqe_raddr_seg);
+
+			sr2_data[j] = (struct mlx5_wqe_data_seg *) seg2; 
+
+			meta1_backup = sr2_ctrl[j]->opmod_idx_opcode;
+			meta2_backup = sr2_ctrl[j]->qpn_ds;
+
+			sr0_data[j*3+0]->addr = htobe64(((uintptr_t) (&sr2_ctrl[j]->qpn_ds)));
+			sr0_data[j*3+1]->addr = htobe64(((uintptr_t) (&sr2_data[j]->addr)));
+
+			if(j>0)
+				sr0_data[(j-1)*3+2]->addr = htobe64(((uintptr_t) (&sr0_raddr[j]->raddr)));
+
+			//XXX point last READ SG to somehwere unused. for now let it modify itself
+			if(j == LIST_SIZE-1)
+				sr0_data[j*3+2]->addr = htobe64(((uintptr_t) (&sr0_raddr[j]->raddr))); 
+
+			//XXX might increase latency
+			//sr_ctrl[j]->fm_ce_se = htonl(0);
+			//sr0_ctrl[j]->fm_ce_se = htonl(0);
+			sr2_ctrl[j]->fm_ce_se = htonl(0);
+			sr2_ctrl[j]->opmod_idx_opcode = sr2_ctrl[j]->opmod_idx_opcode | 0x09000000; //SEND
+
+			sr1_atomic[j]->swap_add =  htobe64(*((uint64_t *)&sr2_ctrl[j]->opmod_idx_opcode));
+
+			sr2_ctrl[j]->qpn_ds = htonl((0 << 8) | 3);
+
+			sr2_ctrl[j]->opmod_idx_opcode = sr2_ctrl[j]->opmod_idx_opcode & 0x00FFFFFF; //NOOP
+
+			sr2_ctrl[j]->imm = htonl(k+1);
+
+			sr1_raddr[j]->raddr = htobe64((uintptr_t) &sr2_ctrl[j]->opmod_idx_opcode);
+			sr1_atomic[j]->compare = htobe64(*((uint64_t *)&sr2_ctrl[j]->opmod_idx_opcode));
+
+			printf("------ BEFORE ------\n");
+			printf("sr0_data[0]: addr %lu length %u\n", be64toh(sr0_data[j+0]->addr), ntohl(sr0_data[j+0]->byte_count));
+			printf("sr0_data[1]: addr %lu length %u\n", be64toh(sr0_data[j+1]->addr), ntohl(sr0_data[j+1]->byte_count));
+			printf("sr0_data[2]: addr %lu length %u\n", be64toh(sr0_data[j+2]->addr), ntohl(sr0_data[j+2]->byte_count));
+			printf("sr0_raddr: raddr %lu\n", ntohll(sr0_raddr[j]->raddr));
+			printf("sr1_atomic: compare %lx (original: %lx) swap_add %lx (original: %lx)\n",
+					be64toh(sr1_atomic[j]->compare), sr1_atomic[j]->compare, be64toh(sr1_atomic[j]->swap_add), sr1_atomic[j]->swap_add);
+			printf("sr1_raddr: raddr %lu\n", ntohll(sr1_raddr[j]->raddr));
+
+			sr2_meta = ntohl(sr2_ctrl[j]->opmod_idx_opcode);
+			idx2 =  ((sr2_meta >> 8) & (UINT_MAX));
+			opmod2 = ((sr2_meta >> 24) & (UINT_MAX));
+			opcode2 = (sr2_meta & USHRT_MAX);
+
+			printf("&sr2_ctrl->opmod_idx_opcode %lu\n", (uintptr_t)&sr2_ctrl[j]->opmod_idx_opcode);
+			printf("sr2_ctrl: raw %lx idx %u opmod %u opcode %u qpn_ds %x fm_ce_se %x sig %u (imm %u)\n", *((uint64_t *)&sr2_ctrl[j]->opmod_idx_opcode), idx2, opmod2, opcode2, ntohl(sr2_ctrl[j]->qpn_ds), ntohl(sr2_ctrl[j]->fm_ce_se), sr2_ctrl[j]->signature, ntohl(sr2_ctrl[j]->imm));
+			printf("sr2_data: addr %lu length %u\n", be64toh(sr2_data[j]->addr), ntohl(sr2_data[j]->byte_count));
+			printf("*sr2_data->addr = %lu\n", *((uint64_t *)be64toh(sr2_data[j]->addr)));
+			printf("sr2_raddr: raddr %lu\n", be64toh(sr2_raddr[j]->raddr));
+
+			count_1 += 6;
+			count_2 += 1;
+
+			if(k == 0)
+				IBV_TRIGGER(master, worker, 5); // trigger first two wrs
+
+
+			assert(LIST_SIZE <= 16);
+
+			// set up RECV for client inputs
+			struct rdma_metadata *recv_meta =  (struct rdma_metadata *)
+				calloc(1, sizeof(struct rdma_metadata) + LIST_SIZE * sizeof(struct ibv_sge));
+
+			for(int l=0; l<LIST_SIZE; l++) {
+				recv_meta->sge_entries[l].addr = ((uintptr_t)&sr1_atomic[l]->compare)+1;
+				recv_meta->sge_entries[l].length = 3;
+			}
+			recv_meta->length = 3*LIST_SIZE;
+			recv_meta->sge_count = LIST_SIZE;
+
+			IBV_RECEIVE_SG(client, recv_meta, mr_local_key(worker, mr_get_sq_idx(worker)));
+		}
+		temp1_wrid[k] = sr1_wrid[0];
+		temp2_wrid[k] = sr2_wrid[0];
+
+		// rate limit
+		while(k - n_hash_req > 100)
+			ibw_cpu_relax();
+	}
 }
 
 void init_binarytree(addr_t addr) {
 	printf("---- Initializing binarytree ----\n");
 
-	struct ll_bucket *bucket = (struct ll_bucket*)addr;
+	struct bt_bucket *bucket = (struct bt_bucket*)addr;
 
 	printf("bucket addr %lu\n", addr);
 	for(int i=0; i<10; i++) {
@@ -152,6 +430,50 @@ void init_binarytree(addr_t addr) {
 
 		printf("bucket[%d] key=%u addr=%lu\n", i, *((uint32_t *)bucket[i].key), be64toh(bucket[i].addr));
 	}
+}
+
+uint32_t post_read(int sockfd, uint64_t src, uint64_t dst, int iosize, int src_mr, int dst_mr) {
+	uint64_t remote_base_addr = mr_remote_addr(sockfd, dst_mr);
+	uint64_t local_base_addr = mr_local_addr(sockfd, src_mr);
+	rdma_meta_t *meta =  (rdma_meta_t *) malloc(sizeof(rdma_meta_t)
+			+ 1 * sizeof(struct ibv_sge));
+
+	meta->addr = dst;
+	meta->length = iosize;
+	meta->sge_count = 1;
+	meta->sge_entries[0].addr = src;
+	meta->sge_entries[0].length = iosize;
+	meta->next = NULL;
+
+	printf("reading from dst %lu to src %lu\n", dst, src);
+
+	return IBV_WRAPPER_RDMA_READ_ASYNC(sockfd, meta, src_mr, dst_mr);
+}
+
+uint32_t post_get_req_async(int sockfd, uint32_t key, uint32_t imm) {
+	struct rdma_metadata *send_meta =  (struct rdma_metadata *)
+		calloc(1, sizeof(struct rdma_metadata) + LIST_SIZE * sizeof(struct ibv_sge));
+
+	printf("--> Send GET [key %u]\n", key);
+
+	//post_dummy_imm(master, 0);
+
+	addr_t base_addr = mr_local_addr(sockfd, MR_BUFFER);
+	uint8_t *param1 = (uint8_t *) base_addr; //key
+
+	for(int i=0; i<LIST_SIZE; i++) {
+		param1[i*3+0] = 0;
+		param1[i*3+1] = 0;
+		param1[i*3+2] = key;
+	}
+
+	send_meta->sge_entries[0].addr = (uintptr_t) param1;
+	send_meta->sge_entries[0].length = 3*LIST_SIZE;
+	send_meta->length = 3*LIST_SIZE;
+	send_meta->sge_count = LIST_SIZE;
+	send_meta->addr = 0;
+	send_meta->imm = imm;
+	return IBV_WRAPPER_SEND_WITH_IMM_ASYNC(sockfd, send_meta, MR_BUFFER, 0);
 }
 
 void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
@@ -179,7 +501,7 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 		//reset
 		*res = 0;
 	#elif defined(ONE_SIDED)
-		volatile struct ll_bucket *bucket = NULL;
+		volatile struct bt_bucket *bucket = NULL;
 		uint32_t wr_id = 0;
 		addr_t bucket_addr =  mr_remote_addr(sockfd, MR_DATA);
 
@@ -190,26 +512,25 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 			wr_id = post_read(sockfd, base_addr, bucket_addr, 19, MR_DATA, MR_DATA);
 			IBV_TRIGGER(master_sock, sockfd, 0);
 			IBV_AWAIT_WORK_COMPLETION(sockfd, wr_id);
-			bucket = (volatile struct ll_bucket *) base_addr;
+			bucket = (volatile struct bt_bucket *) base_addr;
 
 			printf("key required %u found %u\n", (uint8_t)key, bucket->key[0]);
 			if(bucket->key[0] == (uint8_t)key) {
 				printf("found key\n");
-				wr_id = post_read(sockfd, base_addr + offsetof(struct ll_bucket, value),
-						bucket_addr + offsetof(struct ll_bucket, value), 8, MR_DATA, MR_DATA);
+				wr_id = post_read(sockfd, base_addr + offsetof(struct bt_bucket, value),
+						bucket_addr + offsetof(struct bt_bucket, value), 8, MR_DATA, MR_DATA);
 				IBV_TRIGGER(master_sock, sockfd, 0);
 				IBV_AWAIT_WORK_COMPLETION(sockfd, wr_id);
 				break;
 			}
 			else {
 				bucket_addr = ntohll(bucket->next);
-				//base_addr += sizeof(struct ll_bucket);
 			}
 
 			//XXX remove
 			if(i==0) {
-				wr_id = post_read(sockfd, base_addr + offsetof(struct ll_bucket, value),
-						bucket_addr + offsetof(struct ll_bucket, value), 8, MR_DATA, MR_DATA);
+				wr_id = post_read(sockfd, base_addr + offsetof(struct bt_bucket, value),
+						bucket_addr + offsetof(struct bt_bucket, value), 8, MR_DATA, MR_DATA);
 				IBV_TRIGGER(master_sock, sockfd, 0);
 				IBV_AWAIT_WORK_COMPLETION(sockfd, wr_id);
 				break;
