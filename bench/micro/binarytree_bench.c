@@ -21,9 +21,6 @@ int psync = 0;
 static pthread_t offload_thread;
 #define LIST_SIZE 8
 
-int temp1_wrid[OFFLOAD_COUNT] = {0};
-int temp2_wrid[OFFLOAD_COUNT] = {0};
-
 #define REDN 1
 // #define ONE_SIDED 1
 
@@ -86,9 +83,6 @@ uint64_t mr_sizes[MR_COUNT] = {268265456UL, 268265456UL};
     #define ntohll(x)   ((((uint64_t)ntohl(x&0xFFFFFFFF)) << 32) + ntohl(x >> 32))
 #endif
 
-struct wqe_ctrl_seg *sr_ctrl[LIST_SIZE] = {NULL};
-struct mlx5_wqe_data_seg * sr_data[LIST_SIZE] = {NULL};
-struct mlx5_wqe_raddr_seg * sr_raddr[LIST_SIZE] = {NULL};
 struct wqe_ctrl_seg *sr0_ctrl[LIST_SIZE] = {NULL};
 struct mlx5_wqe_raddr_seg * sr0_raddr[LIST_SIZE] = {NULL};
 struct mlx5_wqe_data_seg * sr0_data[LIST_SIZE*3] = { NULL };
@@ -99,9 +93,7 @@ struct mlx5_wqe_atomic_seg * sr1_atomic[LIST_SIZE] = {NULL};
 struct wqe_ctrl_seg *sr2_ctrl[LIST_SIZE] = {NULL};
 struct mlx5_wqe_data_seg * sr2_data[LIST_SIZE] = {NULL};
 struct mlx5_wqe_raddr_seg * sr2_raddr[LIST_SIZE] = {NULL};
-int sr_wrid[LIST_SIZE], sr0_wrid[LIST_SIZE], sr1_wrid[LIST_SIZE], sr2_wrid[LIST_SIZE];
-uint32_t meta1_backup;
-uint32_t meta2_backup;
+int sr0_wrid[LIST_SIZE], sr1_wrid[LIST_SIZE], sr2_wrid[LIST_SIZE];
 
 struct timespec start;
 
@@ -373,10 +365,7 @@ void * offload_binarytree(void *iters) {
 
 			seg2 = ((void*)sr2_ctrl[j]) + sizeof(struct mlx5_wqe_ctrl_seg) + sizeof(struct mlx5_wqe_raddr_seg);
 
-			sr2_data[j] = (struct mlx5_wqe_data_seg *) seg2; 
-
-			meta1_backup = sr2_ctrl[j]->opmod_idx_opcode;
-			meta2_backup = sr2_ctrl[j]->qpn_ds;
+			sr2_data[j] = (struct mlx5_wqe_data_seg *) seg2;
 
 			sr0_data[j*3+0]->addr = htobe64(((uintptr_t) (&sr2_ctrl[j]->qpn_ds)));
 			sr0_data[j*3+1]->addr = htobe64(((uintptr_t) (&sr2_data[j]->addr)));
@@ -447,8 +436,6 @@ void * offload_binarytree(void *iters) {
 
 			IBV_RECEIVE_SG(client, recv_meta, mr_local_key(worker, mr_get_sq_idx(worker)));
 		}
-		temp1_wrid[k] = sr1_wrid[0];
-		temp2_wrid[k] = sr2_wrid[0];
 
 		// rate limit
 		while(k - n_hash_req > 100)
