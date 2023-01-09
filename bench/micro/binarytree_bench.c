@@ -226,7 +226,7 @@ uint32_t post_binarytree_read(int sockfd, uint32_t lkey1, uint32_t lkey2, uint32
 	wr->wr.rdma.rkey = rkey;
 
 	wr->opcode = IBV_WR_RDMA_READ;
-	
+
 	if(signaled)
 		wr->send_flags = IBV_SEND_SIGNALED;
 
