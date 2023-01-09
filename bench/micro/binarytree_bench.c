@@ -555,7 +555,6 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 					bucket_addr + offsetof(struct bt_bucket, value), 8, MR_DATA, MR_DATA);
 			IBV_TRIGGER(master_sock, sockfd, 0);
 			IBV_AWAIT_WORK_COMPLETION(sockfd, wr_id);
-			break;
 		}
 		else {
 			printf("didn't find key required %d. found %d \n", key, bucket->key[0]);
