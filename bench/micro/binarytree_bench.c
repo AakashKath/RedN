@@ -535,6 +535,7 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 
 		//reset
 		*res = 0;
+	}
 	else if(ONE_SIDED) {
 		volatile struct bt_bucket *bucket = NULL;
 		uint32_t wr_id = 0;
@@ -617,7 +618,7 @@ int process_opt_args(int argc, char *argv[]) {
 			goto restart;
 		}
 		else if (strncmp("-redn", argv[i], 5) == 0) {
-			if (argv[i+1] == 1) {
+			if (atoi(argv[i+1]) == 1) {
 				REDN = 1;
 				ONE_SIDED = 0;
 			} else {
