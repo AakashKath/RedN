@@ -21,8 +21,8 @@ int psync = 0;
 static pthread_t offload_thread;
 #define LIST_SIZE 8
 
-int REDN = 1;
-int ONE_SIDED = 0;
+int REDN = 0;
+int ONE_SIDED = 1;
 
 #define SHM_PATH "/ifbw_shm"
 #define SHM_F_SIZE 128
@@ -618,13 +618,8 @@ int process_opt_args(int argc, char *argv[]) {
 			goto restart;
 		}
 		else if (strncmp("-redn", argv[i], 5) == 0) {
-			if (atoi(argv[i+1]) == 1) {
-				REDN = 1;
-				ONE_SIDED = 0;
-			} else {
-				REDN = 0;
-				ONE_SIDED = 1;
-			}
+			REDN = 1;
+			ONE_SIDED = 0;
 			dash_d = i;
 			argc = adjust_args(dash_d, argv, argc, 1);
 			goto restart;
