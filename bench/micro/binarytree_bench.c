@@ -21,6 +21,7 @@ int psync = 0;
 static pthread_t offload_thread;
 #define LIST_SIZE 8
 
+// Pass -redn as arg to use RedN
 int REDN = 0;
 int ONE_SIDED = 1;
 
@@ -715,7 +716,7 @@ int main(int argc, char **argv) {
 	}
 
 	if (argc != 3 && argc != 1) {
-		fprintf(stderr, "usage: %s <peer-address> <iters> [-p <portno>] [-e <sge count>] [-b <batch size>]  (note: run without args to use as server)\n", argv[0]);
+		fprintf(stderr, "usage: %s <peer-address> <iters> [-p <portno>] [-e <sge count>] [-b <batch size>] [-redn] (note: run without args to use as server)\n", argv[0]);
 		return 1;
 	}
 
