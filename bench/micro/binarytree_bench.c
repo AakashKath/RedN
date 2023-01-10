@@ -21,8 +21,8 @@ int psync = 0;
 static pthread_t offload_thread;
 #define LIST_SIZE 8
 
-#define REDN 1
-// #define ONE_SIDED 1
+int REDN = 1;
+int ONE_SIDED = 0;
 
 #define SHM_PATH "/ifbw_shm"
 #define SHM_F_SIZE 128
@@ -516,7 +516,7 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 
 	addr_t base_addr = mr_local_addr(sockfd, MR_DATA);
 
-	#if REDN
+	if(REDN) {
 		volatile uint64_t *res = (volatile uint64_t *) (base_addr);
 
 		uint32_t wr_id = post_get_req_async(sockfd, key, response_id);
@@ -535,7 +535,7 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 
 		//reset
 		*res = 0;
-	#elif defined(ONE_SIDED)
+	else if(ONE_SIDED) {
 		volatile struct bt_bucket *bucket = NULL;
 		uint32_t wr_id = 0;
 		addr_t bucket_addr =  mr_remote_addr(sockfd, MR_DATA);
@@ -562,7 +562,7 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 
 		time_stats_stop(timer);
 		time_stats_print(timer, "Run Complete");
-	#endif
+	}
 }
 
 /* Returns new argc */
@@ -612,6 +612,18 @@ int process_opt_args(int argc, char *argv[]) {
 		}
 		else if (strncmp("-cas", argv[i], 4) == 0) {
 			use_cas = 1;
+			dash_d = i;
+			argc = adjust_args(dash_d, argv, argc, 1);
+			goto restart;
+		}
+		else if (strncmp("-redn", argv[i], 5) == 0) {
+			if (argv[i+1] == 1) {
+				REDN = 1;
+				ONE_SIDED = 0;
+			} else {
+				REDN = 0;
+				ONE_SIDED = 1;
+			}
 			dash_d = i;
 			argc = adjust_args(dash_d, argv, argc, 1);
 			goto restart;
