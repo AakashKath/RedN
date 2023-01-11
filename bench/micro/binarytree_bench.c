@@ -521,7 +521,7 @@ void post_get_req_sync(int sockfd, uint32_t key, addr_t addr, int response_id) {
 	if(REDN) {
 		volatile uint64_t *res = (volatile uint64_t *) (base_addr);
 
-		uint32_t wr_id = post_get_req_async(sockfd, key, addr + sizeof(struct bt_bucket), response_id);
+		uint32_t wr_id = post_get_req_async(sockfd, key, addr, response_id);
 
 		time_stats_start(timer);
 
