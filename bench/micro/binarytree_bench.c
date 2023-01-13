@@ -548,7 +548,7 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 		for (int i=0; i<sizeof(queue)/sizeof(queue[0]); i++) {
 			bucket_addr = queue[i];
 			if (bucket_addr == 0) {
-				printf("Reached leaf node. Trying other branches...\n")
+				printf("Reached leaf node. Trying other branches...\n");
 				continue;
 			}
 			time_stats_start(timer);
