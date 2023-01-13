@@ -483,7 +483,7 @@ uint32_t post_read(int sockfd, uint64_t src, uint64_t dst, int iosize, int src_m
 	return IBV_WRAPPER_RDMA_READ_ASYNC(sockfd, meta, src_mr, dst_mr);
 }
 
-uint32_t post_get_req_async(int sockfd, uint32_t key, addr_t addr, uint32_t imm) {
+uint32_t post_get_req_async(int sockfd, uint32_t key, uint32_t imm) {
 	struct rdma_metadata *send_meta =  (struct rdma_metadata *)
 		calloc(1, sizeof(struct rdma_metadata) + LIST_SIZE * sizeof(struct ibv_sge));
 
@@ -499,13 +499,10 @@ uint32_t post_get_req_async(int sockfd, uint32_t key, addr_t addr, uint32_t imm)
 		param1[i*3+0] = 0;
 		param1[i*3+1] = 0;
 		param1[i*3+2] = key;
-		*param2 = htonll(addr);
 	}
 
 	send_meta->sge_entries[0].addr = (uintptr_t) param1;
 	send_meta->sge_entries[0].length = 3*LIST_SIZE;
-	send_meta->sge_entries[1].addr = (uintptr_t) param2;
-	send_meta->sge_entries[1].length = 8*LIST_SIZE;
 	send_meta->length = 3*LIST_SIZE;
 	send_meta->sge_count = LIST_SIZE;
 	send_meta->addr = 0;
@@ -513,7 +510,7 @@ uint32_t post_get_req_async(int sockfd, uint32_t key, addr_t addr, uint32_t imm)
 	return IBV_WRAPPER_SEND_WITH_IMM_ASYNC(sockfd, send_meta, MR_BUFFER, 0);
 }
 
-void post_get_req_sync(int sockfd, uint32_t key, addr_t addr, int response_id) {
+void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 	struct timespec start, end;
 
 	addr_t base_addr = mr_local_addr(sockfd, MR_DATA);
@@ -521,7 +518,7 @@ void post_get_req_sync(int sockfd, uint32_t key, addr_t addr, int response_id) {
 	if(REDN) {
 		volatile uint64_t *res = (volatile uint64_t *) (base_addr);
 
-		uint32_t wr_id = post_get_req_async(sockfd, key, addr, response_id);
+		uint32_t wr_id = post_get_req_async(sockfd, key, response_id);
 
 		time_stats_start(timer);
 
@@ -799,7 +796,7 @@ int main(int argc, char **argv) {
 
 	for(int i=0; i<iters; i++) {
 		IBV_RECEIVE_IMM(client_sock);
-		post_get_req_sync(client_sock, 1000, mr_remote_addr(client_sock, MR_DATA), response_id);
+		post_get_req_sync(client_sock, 1000, response_id);
 		response_id++;
 		usleep(5000);
 	}
