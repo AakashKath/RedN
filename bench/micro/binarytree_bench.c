@@ -543,7 +543,7 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 		addr_t queue[10];
 		memset(queue, -1, 10 * sizeof(addr_t));
 		queue[0] = mr_remote_addr(sockfd, MR_DATA);
-		bool key_found = false;
+		int key_found = 0;
 
 		for (int i=0; i<sizeof(queue)/sizeof(queue[0]); i++) {
 			bucket_addr = queue[i];
@@ -561,7 +561,7 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 
 			printf("key required %u found %u\n", (uint8_t)key, bucket->key[0]);
 			if(bucket->key[0] == (uint8_t)key) {
-				key_found = true;
+				key_found = 1;
 				printf("found key\n");
 				wr_id = post_read(sockfd, base_addr + offsetof(struct bt_bucket, value),
 						bucket_addr + offsetof(struct bt_bucket, value), 8, MR_DATA, MR_DATA);
