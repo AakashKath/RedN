@@ -539,11 +539,12 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 	else if(ONE_SIDED) {
 		volatile struct bt_bucket *bucket = NULL;
 		uint32_t wr_id = 0;
+		addr_t bucket_addr;
+		addr_t queue[TREE_SIZE];
+
 		time_stats_start(timer);
 		for (int j=0; j<TREE_SIZE; j++) {
 			key = key + j;
-			addr_t bucket_addr;
-			addr_t queue[TREE_SIZE];
 			memset(queue, -1, TREE_SIZE * sizeof(addr_t));
 			queue[0] = mr_remote_addr(sockfd, MR_DATA);
 			int key_found = 0;
