@@ -539,6 +539,7 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 	else if(ONE_SIDED) {
 		volatile struct bt_bucket *bucket = NULL;
 		uint32_t wr_id = 0;
+		time_stats_start(timer);
 		for (int j=0; j<TREE_SIZE; j++) {
 			key = key + j;
 			addr_t bucket_addr;
@@ -553,7 +554,6 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 					printf("Reached leaf node. Trying other branches...\n");
 					continue;
 				}
-				time_stats_start(timer);
 
 				printf("read from remote addr %lu\n", bucket_addr);
 				wr_id = post_read(sockfd, base_addr, bucket_addr, 27, MR_DATA, MR_DATA);
