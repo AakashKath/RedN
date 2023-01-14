@@ -540,10 +540,11 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 		uint32_t wr_id = 0;
 		addr_t bucket_addr;
 		addr_t queue[TREE_SIZE];
+		uint32_t key_to_find;
 
 		time_stats_start(timer);
 		for (int j=0; j<TREE_SIZE; j++) {
-			key = key + j;
+			key_to_find = key + j;
 			memset(queue, -1, TREE_SIZE * sizeof(addr_t));
 			queue[0] = mr_remote_addr(sockfd, MR_DATA);
 			int key_found = 0;
@@ -561,8 +562,8 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 				IBV_AWAIT_WORK_COMPLETION(sockfd, wr_id);
 				bucket = (volatile struct bt_bucket *) base_addr;
 
-				printf("key required %u found %u\n", (uint8_t)key, bucket->key[0]);
-				if(bucket->key[0] == (uint8_t)key) {
+				printf("key required %u found %u\n", (uint8_t)key_to_find, bucket->key[0]);
+				if(bucket->key[0] == (uint8_t)key_to_find) {
 					key_found = 1;
 					break;
 				}
@@ -572,7 +573,7 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 				}
 			}
 			if(!key_found) {
-				printf("didn't find required key %d.\n", (uint8_t)key);
+				printf("didn't find required key %d.\n", (uint8_t)key_to_find);
 			} else {
 				printf("found key\n");
 				wr_id = post_read(sockfd, base_addr + offsetof(struct bt_bucket, value),
