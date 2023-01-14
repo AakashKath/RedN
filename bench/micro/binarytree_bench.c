@@ -19,7 +19,6 @@ int psync = 0;
 
 #define OFFLOAD_COUNT 5000
 static pthread_t offload_thread;
-#define LIST_SIZE 8
 #define TREE_SIZE 10
 
 // Pass -redn as arg to use RedN
@@ -85,17 +84,17 @@ uint64_t mr_sizes[MR_COUNT] = {268265456UL, 268265456UL};
     #define ntohll(x)   ((((uint64_t)ntohl(x&0xFFFFFFFF)) << 32) + ntohl(x >> 32))
 #endif
 
-struct wqe_ctrl_seg *sr0_ctrl[LIST_SIZE] = {NULL};
-struct mlx5_wqe_raddr_seg * sr0_raddr[LIST_SIZE] = {NULL};
-struct mlx5_wqe_data_seg * sr0_data[LIST_SIZE*3] = { NULL };
-struct wqe_ctrl_seg *sr1_ctrl[LIST_SIZE] = {NULL};
-struct mlx5_wqe_data_seg * sr1_data[LIST_SIZE] = {NULL};
-struct mlx5_wqe_raddr_seg * sr1_raddr[LIST_SIZE] = {NULL};
-struct mlx5_wqe_atomic_seg * sr1_atomic[LIST_SIZE] = {NULL};
-struct wqe_ctrl_seg *sr2_ctrl[LIST_SIZE] = {NULL};
-struct mlx5_wqe_data_seg * sr2_data[LIST_SIZE] = {NULL};
-struct mlx5_wqe_raddr_seg * sr2_raddr[LIST_SIZE] = {NULL};
-int sr0_wrid[LIST_SIZE], sr1_wrid[LIST_SIZE], sr2_wrid[LIST_SIZE];
+struct wqe_ctrl_seg *sr0_ctrl[TREE_SIZE] = {NULL};
+struct mlx5_wqe_raddr_seg * sr0_raddr[TREE_SIZE] = {NULL};
+struct mlx5_wqe_data_seg * sr0_data[TREE_SIZE*3] = { NULL };
+struct wqe_ctrl_seg *sr1_ctrl[TREE_SIZE] = {NULL};
+struct mlx5_wqe_data_seg * sr1_data[TREE_SIZE] = {NULL};
+struct mlx5_wqe_raddr_seg * sr1_raddr[TREE_SIZE] = {NULL};
+struct mlx5_wqe_atomic_seg * sr1_atomic[TREE_SIZE] = {NULL};
+struct wqe_ctrl_seg *sr2_ctrl[TREE_SIZE] = {NULL};
+struct mlx5_wqe_data_seg * sr2_data[TREE_SIZE] = {NULL};
+struct mlx5_wqe_raddr_seg * sr2_raddr[TREE_SIZE] = {NULL};
+int sr0_wrid[TREE_SIZE], sr1_wrid[TREE_SIZE], sr2_wrid[TREE_SIZE];
 
 struct timespec start;
 
@@ -125,7 +124,7 @@ void remove_peer_socket(int sockfd) {
 void print_seg_data() {
 	if(sr0_data && sr0_raddr) {
 		printf("------ AFTER ------\n");
-		for(int j=0; j<LIST_SIZE; j++) {
+		for(int j=0; j<TREE_SIZE; j++) {
 			printf("sr0_data[0]: addr %lu length %u\n", be64toh(sr0_data[j+0]->addr), ntohl(sr0_data[j+0]->byte_count));
 			printf("sr0_data[1]: addr %lu length %u\n", be64toh(sr0_data[j+1]->addr), ntohl(sr0_data[j+1]->byte_count));
 			printf("sr0_data[2]: addr %lu length %u\n", be64toh(sr0_data[j+2]->addr), ntohl(sr0_data[j+2]->byte_count));
@@ -254,7 +253,7 @@ void * offload_binarytree(void *iters) {
 
 		IBV_TRIGGER_EXPLICIT(worker, worker, count_1);
 
-		for(int j=0; j<LIST_SIZE; j++) {
+		for(int j=0; j<TREE_SIZE; j++) {
 			printf("remote start: %lu end: %lu\n", mr_remote_addr(worker, MR_DATA), mr_remote_addr(worker, MR_DATA) + mr_sizes[MR_DATA]);
 			sr0_wrid[j] = post_binarytree_read(worker, mr_local_key(worker, mr_get_sq_idx(worker)),
 					mr_local_key(client, mr_get_sq_idx(client)), mr_remote_key(worker, MR_DATA));
@@ -269,17 +268,17 @@ void * offload_binarytree(void *iters) {
 
 			IBV_TRIGGER_EXPLICIT(worker, client, count_2);
 
-			if(j < LIST_SIZE - 2)
+			if(j < TREE_SIZE - 2)
 				IBV_TRIGGER_EXPLICIT(worker, worker, count_1+6);
-			else if(j == LIST_SIZE - 2) {
+			else if(j == TREE_SIZE - 2) {
 				if(k == count - 1)
 					IBV_TRIGGER_EXPLICIT(worker, worker, count_1+5);
 				else
 					IBV_TRIGGER_EXPLICIT(worker, worker, count_1+6);
 			}
 
-			printf("j %d LIST_SIZE %d k %d count %d\n", j, LIST_SIZE, k, count);
-			if(j == LIST_SIZE - 1 && k < count - 1) {
+			printf("j %d TREE_SIZE %d k %d count %d\n", j, TREE_SIZE, k, count);
+			if(j == TREE_SIZE - 1 && k < count - 1) {
 				count_1 += 2;
 				IBV_TRIGGER_EXPLICIT(worker, worker, count_1);
 			}
@@ -373,7 +372,7 @@ void * offload_binarytree(void *iters) {
 				sr0_data[(j-1)*3+2]->addr = htobe64(((uintptr_t) (&sr0_raddr[j]->raddr)));
 
 			//XXX point last READ SG to somehwere unused. for now let it modify itself
-			if(j == LIST_SIZE-1)
+			if(j == TREE_SIZE-1)
 				sr0_data[j*3+2]->addr = htobe64(((uintptr_t) (&sr0_raddr[j]->raddr))); 
 
 			//XXX might increase latency
@@ -420,18 +419,18 @@ void * offload_binarytree(void *iters) {
 				IBV_TRIGGER(master, worker, 5); // trigger first two wrs
 
 
-			assert(LIST_SIZE <= 16);
+			assert(TREE_SIZE <= 16);
 
 			// set up RECV for client inputs
 			struct rdma_metadata *recv_meta =  (struct rdma_metadata *)
-				calloc(1, sizeof(struct rdma_metadata) + LIST_SIZE * sizeof(struct ibv_sge));
+				calloc(1, sizeof(struct rdma_metadata) + TREE_SIZE * sizeof(struct ibv_sge));
 
-			for(int l=0; l<LIST_SIZE; l++) {
+			for(int l=0; l<TREE_SIZE; l++) {
 				recv_meta->sge_entries[l].addr = ((uintptr_t)&sr1_atomic[l]->compare)+1;
 				recv_meta->sge_entries[l].length = 3;
 			}
-			recv_meta->length = 3*LIST_SIZE;
-			recv_meta->sge_count = LIST_SIZE;
+			recv_meta->length = 3*TREE_SIZE;
+			recv_meta->sge_count = TREE_SIZE;
 
 			IBV_RECEIVE_SG(client, recv_meta, mr_local_key(worker, mr_get_sq_idx(worker)));
 		}
@@ -486,7 +485,7 @@ uint32_t post_read(int sockfd, uint64_t src, uint64_t dst, int iosize, int src_m
 
 uint32_t post_get_req_async(int sockfd, uint32_t key, uint32_t imm) {
 	struct rdma_metadata *send_meta =  (struct rdma_metadata *)
-		calloc(1, sizeof(struct rdma_metadata) + LIST_SIZE * sizeof(struct ibv_sge));
+		calloc(1, sizeof(struct rdma_metadata) + TREE_SIZE * sizeof(struct ibv_sge));
 
 	printf("--> Send GET [key %u]\n", key);
 
@@ -496,16 +495,16 @@ uint32_t post_get_req_async(int sockfd, uint32_t key, uint32_t imm) {
 	uint8_t *param1 = (uint8_t *) base_addr; //key
 	uint64_t *param2 = (uint64_t *) (base_addr + 4); //addr
 
-	for(int i=0; i<LIST_SIZE; i++) {
+	for(int i=0; i<TREE_SIZE; i++) {
 		param1[i*3+0] = 0;
 		param1[i*3+1] = 0;
 		param1[i*3+2] = key;
 	}
 
 	send_meta->sge_entries[0].addr = (uintptr_t) param1;
-	send_meta->sge_entries[0].length = 3*LIST_SIZE;
-	send_meta->length = 3*LIST_SIZE;
-	send_meta->sge_count = LIST_SIZE;
+	send_meta->sge_entries[0].length = 3*TREE_SIZE;
+	send_meta->length = 3*TREE_SIZE;
+	send_meta->sge_count = TREE_SIZE;
 	send_meta->addr = 0;
 	send_meta->imm = imm;
 	return IBV_WRAPPER_SEND_WITH_IMM_ASYNC(sockfd, send_meta, MR_BUFFER, 0);
