@@ -20,6 +20,7 @@ int psync = 0;
 #define OFFLOAD_COUNT 5000
 static pthread_t offload_thread;
 #define LIST_SIZE 8
+#define TREE_SIZE 10
 
 // Pass -redn as arg to use RedN
 int REDN = 0;
@@ -447,7 +448,7 @@ void init_binarytree(addr_t addr) {
 	struct bt_bucket *bucket = (struct bt_bucket*)addr;
 
 	printf("bucket addr %lu\n", addr);
-	for(int i=0; i<10; i++) {
+	for(int i=0; i<TREE_SIZE; i++) {
 		bucket[i].key[0] = i + 1000;
 		bucket[i].key[1] = 0;
 		bucket[i].key[2] = 0;
@@ -538,44 +539,46 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 	else if(ONE_SIDED) {
 		volatile struct bt_bucket *bucket = NULL;
 		uint32_t wr_id = 0;
+		for (int j=0; j<TREE_SIZE; j++) {
+			key = key + j;
+			addr_t bucket_addr;
+			addr_t queue[TREE_SIZE];
+			memset(queue, -1, TREE_SIZE * sizeof(addr_t));
+			queue[0] = mr_remote_addr(sockfd, MR_DATA);
+			int key_found = 0;
 
-		addr_t bucket_addr;
-		addr_t queue[10];
-		memset(queue, -1, 10 * sizeof(addr_t));
-		queue[0] = mr_remote_addr(sockfd, MR_DATA);
-		int key_found = 0;
+			for (int i=0; i<TREE_SIZE; i++) {
+				bucket_addr = queue[i];
+				if (bucket_addr == 0) {
+					printf("Reached leaf node. Trying other branches...\n");
+					continue;
+				}
+				time_stats_start(timer);
 
-		for (int i=0; i<sizeof(queue)/sizeof(queue[0]); i++) {
-			bucket_addr = queue[i];
-			if (bucket_addr == 0) {
-				printf("Reached leaf node. Trying other branches...\n");
-				continue;
-			}
-			time_stats_start(timer);
-
-			printf("read from remote addr %lu\n", bucket_addr);
-			wr_id = post_read(sockfd, base_addr, bucket_addr, 27, MR_DATA, MR_DATA);
-			IBV_TRIGGER(master_sock, sockfd, 0);
-			IBV_AWAIT_WORK_COMPLETION(sockfd, wr_id);
-			bucket = (volatile struct bt_bucket *) base_addr;
-
-			printf("key required %u found %u\n", (uint8_t)key, bucket->key[0]);
-			if(bucket->key[0] == (uint8_t)key) {
-				key_found = 1;
-				printf("found key\n");
-				wr_id = post_read(sockfd, base_addr + offsetof(struct bt_bucket, value),
-						bucket_addr + offsetof(struct bt_bucket, value), 8, MR_DATA, MR_DATA);
+				printf("read from remote addr %lu\n", bucket_addr);
+				wr_id = post_read(sockfd, base_addr, bucket_addr, 27, MR_DATA, MR_DATA);
 				IBV_TRIGGER(master_sock, sockfd, 0);
 				IBV_AWAIT_WORK_COMPLETION(sockfd, wr_id);
-				break;
+				bucket = (volatile struct bt_bucket *) base_addr;
+
+				printf("key required %u found %u\n", (uint8_t)key, bucket->key[0]);
+				if(bucket->key[0] == (uint8_t)key) {
+					key_found = 1;
+					printf("found key\n");
+					wr_id = post_read(sockfd, base_addr + offsetof(struct bt_bucket, value),
+							bucket_addr + offsetof(struct bt_bucket, value), 8, MR_DATA, MR_DATA);
+					IBV_TRIGGER(master_sock, sockfd, 0);
+					IBV_AWAIT_WORK_COMPLETION(sockfd, wr_id);
+					break;
+				}
+				else {
+					queue[2*i+1] = ntohll(bucket->left);
+					queue[2*i+2] = ntohll(bucket->right);
+				}
 			}
-			else {
-				queue[2*i+1] = ntohll(bucket->left);
-				queue[2*i+2] = ntohll(bucket->right);
+			if(!key_found) {
+				printf("didn't find required key %d.\n", (uint8_t)key);
 			}
-		}
-		if(!key_found) {
-			printf("didn't find required key %d. found %d \n", (uint8_t)key, bucket->key[0]);
 		}
 
 		time_stats_stop(timer);
