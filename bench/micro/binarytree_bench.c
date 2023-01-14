@@ -552,8 +552,12 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 			for (int i=0; i<TREE_SIZE; i++) {
 				bucket_addr = queue[i];
 				if (bucket_addr == 0) {
-					printf("Reached leaf node. Trying other branches...\n");
+					printf("reached leaf node. Trying other branches...\n");
 					continue;
+				}
+				if (bucket_addr == -1) {
+					printf("reached end of tree.");
+					break;
 				}
 
 				printf("read from remote addr %lu\n", bucket_addr);
@@ -568,8 +572,10 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 					break;
 				}
 				else {
-					queue[2*i+1] = ntohll(bucket->left);
-					queue[2*i+2] = ntohll(bucket->right);
+					if(2*i+1 < TREE_SIZE)
+						queue[2*i+1] = ntohll(bucket->left);
+					if(2*i+2 < TREE_SIZE)
+						queue[2*i+2] = ntohll(bucket->right);
 				}
 			}
 			if(!key_found) {
