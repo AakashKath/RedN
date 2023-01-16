@@ -579,9 +579,9 @@ void post_get_req_sync(int sockfd, uint32_t key, int response_id) {
 				}
 			}
 			if(!key_found) {
-				printf("---------- didn't find required key %u ----------\n", key_to_find);
+				printf("\n---------- didn't find required key %u ----------\n\n", key_to_find);
 			} else {
-				printf("------------------ found key %u ------------------\n", key_to_find);
+				printf("\n------------------ found key %u ------------------\n\n", key_to_find);
 				wr_id = post_read(sockfd, base_addr + offsetof(struct bt_bucket, value),
 						bucket_addr + offsetof(struct bt_bucket, value), 8, MR_DATA, MR_DATA);
 				IBV_TRIGGER(master_sock, sockfd, 0);
